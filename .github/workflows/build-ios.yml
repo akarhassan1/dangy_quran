@@ -17,12 +17,29 @@ jobs:
       - name: Pull LFS Large Files
         run: git lfs pull
 
-      - name: Extract Project Zip
+      - name: Extract Project Zip with Path Normalizer
         run: |
-          if [ -f "Dangy_Quran_iOS_v5.1_Project.zip" ]; then
-            echo "Extracting Dangy_Quran_iOS_v5.1_Project.zip..."
-            unzip -o Dangy_Quran_iOS_v5.1_Project.zip
-          fi
+          python3 - << 'EOF'
+          import zipfile, os
+
+          zip_file = "Dangy_Quran_iOS_v5.1_Project.zip"
+          if os.path.exists(zip_file):
+              print(f"Extracting {zip_file} with POSIX path normalization...")
+              with zipfile.ZipFile(zip_file, "r") as z:
+                  for info in z.infolist():
+                      clean_name = info.filename.replace('\\', '/').lstrip('/')
+                      if not clean_name:
+                          continue
+                      if info.is_dir() or clean_name.endswith('/'):
+                          os.makedirs(clean_name, exist_ok=True)
+                      else:
+                          parent = os.path.dirname(clean_name)
+                          if parent:
+                              os.makedirs(parent, exist_ok=True)
+                          with open(clean_name, "wb") as f:
+                              f.write(z.read(info))
+              print("Extraction completed successfully!")
+          EOF
           ls -la
 
       - name: Setup Node.js
@@ -31,17 +48,17 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install --legacy-peer-deps || npm install
+        run: npm install --legacy-peer-deps || npm install --force
 
-      - name: Build Web Application
+      - name: Build Web App
         run: npm run build
 
       - name: Sync Capacitor iOS
         run: npx cap sync ios
 
-      - name: Build iOS Native Archive (.app)
-        working-directory: ios/App
+      - name: Compile iOS Native Binary (.app)
         run: |
+          cd ios/App
           xcodebuild clean build \
             -project App.xcodeproj \
             -scheme App \
@@ -55,22 +72,22 @@ jobs:
             DEVELOPMENT_TEAM="" \
             build
 
-      - name: Package App into Sideloadable IPA
+      - name: Package App into IPA for Sideloadly
         run: |
           mkdir -p build-output/Payload
-          APP_PATH=$(find ios/App/build -name "*.app" -type d | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "App.app" -type d | head -n 1)
+          APP_DIR=$(find ios/App -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_DIR" ]; then
+            APP_DIR=$(find ~/Library/Developer/Xcode/DerivedData -name "App.app" -type d | head -n 1)
           fi
-          echo "Found compiled .app bundle at: $APP_PATH"
-          cp -r "$APP_PATH" build-output/Payload/
+          echo "Found compiled app at: $APP_DIR"
+          cp -r "$APP_DIR" build-output/Payload/
           cd build-output
           zip -r -9 ../Dangy_Quran_App_v5.1.ipa Payload
           cd ..
-          echo "IPA Created Successfully!"
+          echo "IPA Size:"
           ls -lh Dangy_Quran_App_v5.1.ipa
 
-      - name: Upload IPA Artifact (Ready for Sideloadly)
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Dangy_Quran_App_v5.1_iOS_IPA
